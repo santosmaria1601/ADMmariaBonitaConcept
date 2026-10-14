@@ -94,6 +94,12 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px
 
   <div class="card">
     <h2>Configurações</h2>
+    <h3>Categorias</h3>
+    <label for="newCategory">Nome da nova categoria</label>
+    <input id="newCategory" placeholder="Ex.: Pijamas" maxlength="80">
+    <div class="actions"><button class="btn gold" type="button" onclick="addCategory()">Criar categoria</button></div>
+    <div id="categoryMsg" role="status" style="margin-top:10px;font-size:13px;color:var(--gold2)"></div>
+    <div id="categoryList" style="display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 24px"></div>
     <label>WhatsApp da loja (somente números com DDI/DDD)</label>
     <input id="whatsapp" placeholder="5522999999999">
     <div class="actions"><button class="btn dark" onclick="saveSettings()">Salvar WhatsApp</button></div>
@@ -104,6 +110,8 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px
 <script>
 const KEY='mariaBonitaProducts';
 const SETTINGS='mariaBonitaSettings';
+const CATEGORIES='mariaBonitaCategories';
+const defaultCategories=['Calcinhas','Sutiã','Baby Doll','Camisola','Conjuntos','Moda Fitness'];
 let editingId=null;
 let selectedImages=[];
 
@@ -170,7 +178,40 @@ function showApp(){
   let settings={};
   try{settings=JSON.parse(localStorage.getItem(SETTINGS)||'{}')||{}}catch(e){}
   document.getElementById('whatsapp').value=settings.whatsapp||'';
+  renderCategories();
+  document.getElementById('newCategory').addEventListener('keydown',function(e){
+    if(e.key==='Enter'){e.preventDefault();addCategory()}
+  });
   render();
+}
+function getCategories(){
+  let custom=[];
+  try{const value=JSON.parse(localStorage.getItem(CATEGORIES)||'[]');if(Array.isArray(value))custom=value}catch(e){}
+  const names=[...defaultCategories,...custom,...getProducts().map(p=>p.category)];
+  const seen=new Set();
+  return names.filter(name=>{
+    if(typeof name!=='string'||!name.trim())return false;
+    const key=name.trim().toLocaleLowerCase('pt-BR');
+    if(seen.has(key))return false;seen.add(key);return true;
+  }).map(name=>name.trim());
+}
+function renderCategories(selected){
+  const select=document.getElementById('category');
+  const current=selected||select.value;
+  const categories=getCategories();
+  select.replaceChildren(...categories.map(name=>new Option(name,name)));
+  if(categories.includes(current))select.value=current;
+  document.getElementById('categoryList').innerHTML=categories.map(name=>`<span style="padding:8px 12px;background:var(--bg);border:1px solid var(--line);border-radius:18px;font-size:13px">${esc(name)}</span>`).join('');
+}
+function addCategory(){
+  const input=document.getElementById('newCategory');
+  const msg=document.getElementById('categoryMsg');
+  const name=input.value.trim().replace(/\s+/g,' ');
+  if(!name){msg.textContent='Digite o nome da categoria.';input.focus();return}
+  if(getCategories().some(item=>item.toLocaleLowerCase('pt-BR')===name.toLocaleLowerCase('pt-BR'))){msg.textContent='Essa categoria já existe.';return}
+  try{localStorage.setItem(CATEGORIES,JSON.stringify([...getCategories(),name]))}
+  catch(e){msg.textContent='Não foi possível salvar a categoria neste navegador.';return}
+  renderCategories(name);input.value='';msg.textContent='Categoria criada! Já está disponível no formulário.';
 }
 async function handleImageFiles(input){
   const files=[...input.files].filter(f=>f.type.startsWith('image/'));
@@ -247,7 +288,7 @@ function editProduct(id){
   editingId=id;
   document.getElementById('formTitle').textContent='Editar produto';
   document.getElementById('name').value=p.name;
-  document.getElementById('category').value=p.category;
+  renderCategories(p.category);
   document.getElementById('price').value=p.price;
   selectedImages=[...(p.images||((p.image)?[p.image]:[]))];
   document.getElementById('image').value=selectedImages[0]||'';
