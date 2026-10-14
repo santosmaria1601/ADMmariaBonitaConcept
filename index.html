@@ -23,25 +23,13 @@ input,select{width:100%;padding:12px;border:1px solid var(--line);border-radius:
 table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px;border-bottom:1px solid var(--line);font-size:14px}th{font-size:12px;color:var(--muted)}
 .thumb{width:54px;height:54px;border-radius:8px;object-fit:cover;background:#eee;vertical-align:middle}
 .empty{text-align:center;color:var(--muted);padding:25px}
-.login{max-width:420px;margin:90px auto}.msg{margin-top:10px;font-size:13px;color:var(--danger)}
 @media(max-width:700px){.wrap{padding:14px}.grid{grid-template-columns:1fr}.full{grid-column:auto}table{display:block;overflow-x:auto;white-space:nowrap}header{padding:15px}}
 </style>
 </head>
 <body>
-<div id="login" class="login card">
-  <h1>Acesso ADM</h1>
-  <p style="color:var(--muted)">Maria Bonita Concept</p>
-  <label>Senha</label>
-  <input id="password" type="password" placeholder="Digite a senha">
-  <div class="actions"><button id="loginButton" class="btn gold" type="button">Entrar</button></div>
-  <div id="loginMsg" class="msg"></div>
-  <p style="font-size:12px;color:var(--muted);margin-top:18px">Senha inicial: <b>1234</b>. Você pode alterá-la no painel.</p>
-</div>
-
-<div id="app" style="display:none">
+<div id="app">
 <header>
   <div><div class="logo">Maria Bonita Concept</div><div class="badge">PAINEL ADMINISTRATIVO</div></div>
-  <button class="btn secondary" onclick="logout()">Sair</button>
 </header>
 
 <div class="wrap">
@@ -82,10 +70,6 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px
     <label>WhatsApp da loja (somente números com DDI/DDD)</label>
     <input id="whatsapp" placeholder="5522999999999">
     <div class="actions"><button class="btn dark" onclick="saveSettings()">Salvar WhatsApp</button></div>
-    <hr style="border:0;border-top:1px solid var(--line);margin:20px 0">
-    <label>Nova senha do ADM</label>
-    <input id="newPassword" type="password" placeholder="Nova senha">
-    <div class="actions"><button class="btn dark" onclick="changePassword()">Alterar senha</button></div>
   </div>
 </div>
 </div>
@@ -93,7 +77,6 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px
 <script>
 const KEY='mariaBonitaProducts';
 const SETTINGS='mariaBonitaSettings';
-const PASS='mariaBonitaAdminPassword';
 let editingId=null;
 let selectedImages=[];
 
@@ -156,40 +139,12 @@ function getProducts(){
   try{return JSON.parse(p)}catch(e){return defaults}
 }
 function setProducts(p){localStorage.setItem(KEY,JSON.stringify(p))}
-function login(){
-  var input=document.getElementById('password');
-  var msg=document.getElementById('loginMsg');
-  var entered=(input.value||'').trim();
-  var saved=(localStorage.getItem(PASS)||'1234').trim();
-  if(entered===saved){
-    sessionStorage.setItem('admOK','1');
-    document.getElementById('login').style.display='none';
-    document.getElementById('app').style.display='block';
-    var settings={};
-    try{settings=JSON.parse(localStorage.getItem(SETTINGS)||'{}')}catch(e){}
-    document.getElementById('whatsapp').value=settings.whatsapp||'';
-    if(typeof render==='function') render();
-  }else{
-    msg.textContent='Senha incorreta. Use 1234 se ainda não alterou a senha.';
-    input.focus();
-    input.select();
-  }
-}
-function bindLogin(){
-  var btn=document.getElementById('loginButton');
-  var input=document.getElementById('password');
-  if(btn) btn.addEventListener('click',login);
-  if(input) input.addEventListener('keydown',function(e){
-    if(e.key==='Enter'){e.preventDefault();login();}
-  });
-}
 function showApp(){
-  document.getElementById('login').style.display='none';
-  document.getElementById('app').style.display='block';
-  document.getElementById('whatsapp').value=(JSON.parse(localStorage.getItem(SETTINGS)||'{}').whatsapp)||'';
+  let settings={};
+  try{settings=JSON.parse(localStorage.getItem(SETTINGS)||'{}')||{}}catch(e){}
+  document.getElementById('whatsapp').value=settings.whatsapp||'';
   render();
 }
-function logout(){sessionStorage.removeItem('admOK');location.reload()}
 async function handleImageFiles(input){
   const files=[...input.files].filter(f=>f.type.startsWith('image/'));
   if(!files.length)return;
@@ -290,18 +245,8 @@ function saveSettings(){
   localStorage.setItem(SETTINGS,JSON.stringify({whatsapp}));
   alert('WhatsApp salvo.');
 }
-function changePassword(){
-  const p=document.getElementById('newPassword').value;
-  if(p.length<4){alert('Use uma senha com pelo menos 4 caracteres.');return}
-  localStorage.setItem(PASS,p);document.getElementById('newPassword').value='';alert('Senha alterada.');
-}
 function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-document.addEventListener('DOMContentLoaded',function(){
-  bindLogin();
-  try{
-    if(sessionStorage.getItem('admOK')==='1') showApp();
-  }catch(e){}
-});
+document.addEventListener('DOMContentLoaded',showApp);
 </script>
 </body>
 </html>
