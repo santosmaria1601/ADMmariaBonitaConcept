@@ -54,12 +54,19 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px
 </style>
 </head>
 <body>
-<div id="app">
+<section id="onlineLogin" class="card" style="max-width:430px;margin:40px auto">
+<h1>Maria Bonita</h1><p>Entre pelo link enviado ao seu e-mail.</p>
+<label for="adminEmail">E-mail da administradora</label><input id="adminEmail" type="email" autocomplete="email" placeholder="Seu e-mail">
+<div class="actions"><button class="btn gold" id="sendLink" onclick="sendLoginLink()">Receber link de acesso</button></div>
+<p id="authMsg" role="status"></p></section>
+<div id="app" hidden>
 <header>
   <div><div class="logo">Maria Bonita Concept</div><div class="badge">PAINEL ADMINISTRATIVO</div></div>
 </header>
 
 <div class="wrap">
+  <div class="card"><div class="actions" style="margin-top:0"><button class="btn secondary" onclick="reloadOnline()">Atualizar dados</button><button class="btn secondary" onclick="signOutOnline()">Sair</button></div><p id="onlineStatus" role="status">Conectando…</p></div>
+  <div class="card"><h2>Produtos cadastrados neste navegador</h2><p>Se você já cadastrou produtos no Mac, abra este ADM no mesmo navegador e endereço para importá-los.</p><p id="legacyCount"></p><div class="actions"><button class="btn secondary" onclick="downloadLegacy()">Baixar cópia dos dados locais</button><button class="btn gold" onclick="importLegacy()">Importar produtos do Mac</button></div><p id="importStatus" role="status"></p></div>
   <div class="card">
     <h1 id="formTitle">Adicionar produto</h1>
     <div class="grid">
@@ -107,6 +114,119 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 8px
 </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2">const online=supabase.createClient('https://oasmkfdweixuyosrrmla.supabase.co','sb_publishable_WV9wLfV_xtpS5oMknWalKQ_6nUNioCP');
+
+let cloudProducts=[],cloudCategories=[],legacyProducts=[],legacyCategories=[],legacySettings={};
+let onlineReady=false,busy=false,imagesLoading=false;
+function getProducts(){return cloudProducts}
+function getCategories(){return [...new Set([...defaultCategories,...cloudCategories,...cloudProducts.map(p=>p.category)])]}
+function setStatus(message){document.getElementById('onlineStatus').textContent=message}
+function check(result){if(result.error)throw result.error;return result.data}
+function requireReady(){if(!onlineReady)throw new Error('Entre na conta autorizada e aguarde os dados carregarem.')}
+async function withSave(action){
+ if(busy)return;
+ try{requireReady();busy=true;document.querySelectorAll('#app button').forEach(b=>b.disabled=true);await action()}
+ catch(e){setStatus('Não foi possível concluir: '+e.message)}
+ finally{busy=false;document.querySelectorAll('#app button').forEach(b=>b.disabled=false)}
+}
+async function sendLoginLink(){
+ const email=document.getElementById('adminEmail').value.trim();
+ const msg=document.getElementById('authMsg');const button=document.getElementById('sendLink');
+ if(!email||!document.getElementById('adminEmail').checkValidity()){msg.textContent='Digite um e-mail válido.';return}
+ button.disabled=true;
+ try{check(await online.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname}}));msg.textContent='Link enviado. Abra o e-mail e toque no link para entrar.'}
+ catch(e){msg.textContent='Não foi possível enviar: '+e.message}
+ finally{button.disabled=false}
+}
+async function signOutOnline(){await online.auth.signOut();location.reload()}
+async function reloadOnline(){
+ onlineReady=false;setStatus('Carregando dados online…');
+ try{
+  const results=await Promise.all([online.from('mb_products').select('*').order('created_at'),online.from('mb_categories').select('name').order('name'),online.from('mb_settings').select('whatsapp').eq('id',1).maybeSingle()]);
+  const rows=check(results[0]);const categories=check(results[1]);const settings=check(results[2]);
+  cloudProducts=rows.map(p=>({...p,price:Number(p.price)}));cloudCategories=categories.map(c=>c.name);
+  document.getElementById('whatsapp').value=settings?.whatsapp||'';
+  renderCategories();render();onlineReady=true;setStatus('Dados online atualizados. As alterações aparecem no site em qualquer aparelho.');
+ }catch(e){setStatus('Erro ao carregar dados: '+e.message)}
+}
+async function initializeOnline(){
+ try{
+  try{legacyProducts=JSON.parse(localStorage.getItem(KEY)||'[]');if(!Array.isArray(legacyProducts))legacyProducts=[];legacyCategories=JSON.parse(localStorage.getItem(CATEGORIES)||'[]');legacySettings=JSON.parse(localStorage.getItem(SETTINGS)||'{}')||{}}catch(e){}
+  document.getElementById('legacyCount').textContent=legacyProducts.length+' produtos encontrados neste navegador.';
+  const {data,error}=await online.auth.getSession();if(error)throw error;
+  if(!data.session)return;
+  const allowed=check(await online.rpc('mb_is_admin'));
+  if(!allowed){document.getElementById('authMsg').textContent='Seu e-mail ainda não foi autorizado para administrar a loja.';return}
+  document.getElementById('onlineLogin').hidden=true;document.getElementById('app').hidden=false;
+  document.getElementById('newCategory').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addCategory()}});
+  await reloadOnline();
+ }catch(e){document.getElementById('authMsg').textContent='Erro na conexão: '+e.message}
+}
+async function storeImages(images){
+ const stored=[];
+ for(const src of images){
+  if(!src.startsWith('data:image/')){stored.push(src);continue}
+  const blob=await (await fetch(src)).blob();const path=crypto.randomUUID()+'.jpg';
+  check(await online.storage.from('maria-bonita-fotos').upload(path,blob,{contentType:blob.type,upsert:false}));
+  stored.push(online.storage.from('maria-bonita-fotos').getPublicUrl(path).data.publicUrl);
+ }
+ return stored;
+}
+async function saveProduct(){
+ if(imagesLoading){setStatus('Aguarde as fotos terminarem de carregar.');return}
+ await withSave(async()=>{
+  const name=document.getElementById('name').value.trim();const category=document.getElementById('category').value;
+  const price=Number(document.getElementById('price').value);
+  const sizes=document.getElementById('sizes').value.split(',').map(x=>x.trim()).filter(Boolean);
+  const colors=document.getElementById('colors').value.split(',').map(x=>x.trim()).filter(Boolean);
+  if(!name||!document.getElementById('price').value||!Number.isFinite(price)||price<0||!sizes.length||!colors.length)throw new Error('Preencha nome, preço válido, tamanhos e cores.');
+  const images=await storeImages([...selectedImages]);
+  const row={id:editingId||crypto.randomUUID(),name,category,price,sizes,colors,images,image:images[0]||''};
+  check(await online.from('mb_categories').upsert({name:category}));
+  check(await online.from('mb_products').upsert(row));
+  clearForm();await reloadOnline();setStatus('Produto salvo online!');
+ });
+}
+async function deleteProduct(id){
+ if(!confirm('Excluir este produto do catálogo online?'))return;
+ await withSave(async()=>{check(await online.from('mb_products').delete().eq('id',id));await reloadOnline();setStatus('Produto excluído.')});
+}
+async function addCategory(){
+ await withSave(async()=>{
+  const input=document.getElementById('newCategory');const name=input.value.trim().replace(/\s+/g,' ');
+  if(!name)throw new Error('Digite o nome da categoria.');
+  if(getCategories().some(c=>c.toLocaleLowerCase('pt-BR')===name.toLocaleLowerCase('pt-BR')))throw new Error('Essa categoria já existe.');
+  check(await online.from('mb_categories').insert({name}));cloudCategories.push(name);renderCategories(name);input.value='';document.getElementById('categoryMsg').textContent='Categoria salva online!';setStatus('Categoria criada.');
+ });
+}
+async function saveSettings(){
+ await withSave(async()=>{check(await online.from('mb_settings').upsert({id:1,whatsapp:document.getElementById('whatsapp').value.replace(/\D/g,'')}));setStatus('WhatsApp salvo online!')});
+}
+function downloadLegacy(){
+ const blob=new Blob([JSON.stringify({products:legacyProducts,categories:legacyCategories,settings:legacySettings},null,2)],{type:'application/json'});
+ const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='maria_bonita_backup_mac.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+async function importLegacy(){
+ if(!legacyProducts.length){document.getElementById('importStatus').textContent='Nenhum produto local encontrado. Abra no navegador do Mac onde você cadastrou as peças.';return}
+ if(!confirm('Importar '+legacyProducts.length+' produtos e fotos? Produtos já importados serão atualizados.'))return;
+ await withSave(async()=>{
+  let count=0;const msg=document.getElementById('importStatus');
+  const names=[...new Set([...defaultCategories,...(Array.isArray(legacyCategories)?legacyCategories:[]),...legacyProducts.map(p=>p.category)].filter(Boolean))];
+  check(await online.from('mb_categories').upsert(names.map(name=>({name}))));
+  for(const p of legacyProducts){
+   msg.textContent='Importando '+(count+1)+' de '+legacyProducts.length+'…';
+   const images=await storeImages(p.images?.length?p.images:(p.image?[p.image]:[]));
+   const row={id:'legacy-'+p.id,name:p.name,category:p.category,price:Number(p.price),sizes:p.sizes||['Único'],colors:p.colors||['Única'],images,image:images[0]||''};
+   check(await online.from('mb_products').upsert(row));count++;
+  }
+  if(legacySettings.whatsapp)check(await online.from('mb_settings').upsert({id:1,whatsapp:legacySettings.whatsapp}));
+  await reloadOnline();msg.textContent=count+' produtos importados com sucesso. Os dados locais foram preservados.';
+ });
+}
+const originalHandleImageFiles=handleImageFiles;
+handleImageFiles=async function(input){imagesLoading=true;try{await originalHandleImageFiles(input)}finally{imagesLoading=false}};
+document.addEventListener('DOMContentLoaded',initializeOnline);
+</script>
 <script>
 const KEY='mariaBonitaProducts';
 const SETTINGS='mariaBonitaSettings';
@@ -305,7 +425,7 @@ function deleteProduct(id){
 function render(){
   const p=getProducts();
   document.getElementById('list').innerHTML=p.length?`<table><thead><tr><th>Imagem</th><th>Produto</th><th>Categoria</th><th>Preço</th><th>Ações</th></tr></thead><tbody>${
-    p.map(x=>`<tr><td>${(x.images&&x.images[0]||x.image)?`<img class="thumb" src="${x.images&&x.images[0]||x.image}" onerror="this.style.display='none'">`:'—'}</td><td><b>${esc(x.name)}</b></td><td>${esc(x.category)}</td><td>R$ ${x.price.toFixed(2).replace('.',',')}</td><td><button class="btn gold" onclick="editProduct(${x.id})">Editar</button> <button class="btn danger" onclick="deleteProduct(${x.id})">Excluir</button></td></tr>`).join('')
+    p.map(x=>`<tr><td>${(x.images&&x.images[0]||x.image)?`<img class="thumb" src="${x.images&&x.images[0]||x.image}" onerror="this.style.display='none'">`:'—'}</td><td><b>${esc(x.name)}</b></td><td>${esc(x.category)}</td><td>R$ ${x.price.toFixed(2).replace('.',',')}</td><td><button class="btn gold" onclick="editProduct('${x.id}')">Editar</button> <button class="btn danger" onclick="deleteProduct('${x.id}')">Excluir</button></td></tr>`).join('')
   }</tbody></table>`:'<div class="empty">Nenhum produto cadastrado.</div>';
 }
 function saveSettings(){
@@ -314,7 +434,119 @@ function saveSettings(){
   alert('WhatsApp salvo.');
 }
 function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-document.addEventListener('DOMContentLoaded',showApp);
+
+const online=supabase.createClient('https://oasmkfdweixuyosrrmla.supabase.co','sb_publishable_WV9wLfV_xtpS5oMknWalKQ_6nUNioCP');
+
+let cloudProducts=[],cloudCategories=[],legacyProducts=[],legacyCategories=[],legacySettings={};
+let onlineReady=false,busy=false,imagesLoading=false;
+function getProducts(){return cloudProducts}
+function getCategories(){return [...new Set([...defaultCategories,...cloudCategories,...cloudProducts.map(p=>p.category)])]}
+function setStatus(message){document.getElementById('onlineStatus').textContent=message}
+function check(result){if(result.error)throw result.error;return result.data}
+function requireReady(){if(!onlineReady)throw new Error('Entre na conta autorizada e aguarde os dados carregarem.')}
+async function withSave(action){
+ if(busy)return;
+ try{requireReady();busy=true;document.querySelectorAll('#app button').forEach(b=>b.disabled=true);await action()}
+ catch(e){setStatus('Não foi possível concluir: '+e.message)}
+ finally{busy=false;document.querySelectorAll('#app button').forEach(b=>b.disabled=false)}
+}
+async function sendLoginLink(){
+ const email=document.getElementById('adminEmail').value.trim();
+ const msg=document.getElementById('authMsg');const button=document.getElementById('sendLink');
+ if(!email||!document.getElementById('adminEmail').checkValidity()){msg.textContent='Digite um e-mail válido.';return}
+ button.disabled=true;
+ try{check(await online.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname}}));msg.textContent='Link enviado. Abra o e-mail e toque no link para entrar.'}
+ catch(e){msg.textContent='Não foi possível enviar: '+e.message}
+ finally{button.disabled=false}
+}
+async function signOutOnline(){await online.auth.signOut();location.reload()}
+async function reloadOnline(){
+ onlineReady=false;setStatus('Carregando dados online…');
+ try{
+  const results=await Promise.all([online.from('mb_products').select('*').order('created_at'),online.from('mb_categories').select('name').order('name'),online.from('mb_settings').select('whatsapp').eq('id',1).maybeSingle()]);
+  const rows=check(results[0]);const categories=check(results[1]);const settings=check(results[2]);
+  cloudProducts=rows.map(p=>({...p,price:Number(p.price)}));cloudCategories=categories.map(c=>c.name);
+  document.getElementById('whatsapp').value=settings?.whatsapp||'';
+  renderCategories();render();onlineReady=true;setStatus('Dados online atualizados. As alterações aparecem no site em qualquer aparelho.');
+ }catch(e){setStatus('Erro ao carregar dados: '+e.message)}
+}
+async function initializeOnline(){
+ try{
+  try{legacyProducts=JSON.parse(localStorage.getItem(KEY)||'[]');if(!Array.isArray(legacyProducts))legacyProducts=[];legacyCategories=JSON.parse(localStorage.getItem(CATEGORIES)||'[]');legacySettings=JSON.parse(localStorage.getItem(SETTINGS)||'{}')||{}}catch(e){}
+  document.getElementById('legacyCount').textContent=legacyProducts.length+' produtos encontrados neste navegador.';
+  const {data,error}=await online.auth.getSession();if(error)throw error;
+  if(!data.session)return;
+  const allowed=check(await online.rpc('mb_is_admin'));
+  if(!allowed){document.getElementById('authMsg').textContent='Seu e-mail ainda não foi autorizado para administrar a loja.';return}
+  document.getElementById('onlineLogin').hidden=true;document.getElementById('app').hidden=false;
+  document.getElementById('newCategory').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();addCategory()}});
+  await reloadOnline();
+ }catch(e){document.getElementById('authMsg').textContent='Erro na conexão: '+e.message}
+}
+async function storeImages(images){
+ const stored=[];
+ for(const src of images){
+  if(!src.startsWith('data:image/')){stored.push(src);continue}
+  const blob=await (await fetch(src)).blob();const path=crypto.randomUUID()+'.jpg';
+  check(await online.storage.from('maria-bonita-fotos').upload(path,blob,{contentType:blob.type,upsert:false}));
+  stored.push(online.storage.from('maria-bonita-fotos').getPublicUrl(path).data.publicUrl);
+ }
+ return stored;
+}
+async function saveProduct(){
+ if(imagesLoading){setStatus('Aguarde as fotos terminarem de carregar.');return}
+ await withSave(async()=>{
+  const name=document.getElementById('name').value.trim();const category=document.getElementById('category').value;
+  const price=Number(document.getElementById('price').value);
+  const sizes=document.getElementById('sizes').value.split(',').map(x=>x.trim()).filter(Boolean);
+  const colors=document.getElementById('colors').value.split(',').map(x=>x.trim()).filter(Boolean);
+  if(!name||!document.getElementById('price').value||!Number.isFinite(price)||price<0||!sizes.length||!colors.length)throw new Error('Preencha nome, preço válido, tamanhos e cores.');
+  const images=await storeImages([...selectedImages]);
+  const row={id:editingId||crypto.randomUUID(),name,category,price,sizes,colors,images,image:images[0]||''};
+  check(await online.from('mb_categories').upsert({name:category}));
+  check(await online.from('mb_products').upsert(row));
+  clearForm();await reloadOnline();setStatus('Produto salvo online!');
+ });
+}
+async function deleteProduct(id){
+ if(!confirm('Excluir este produto do catálogo online?'))return;
+ await withSave(async()=>{check(await online.from('mb_products').delete().eq('id',id));await reloadOnline();setStatus('Produto excluído.')});
+}
+async function addCategory(){
+ await withSave(async()=>{
+  const input=document.getElementById('newCategory');const name=input.value.trim().replace(/\s+/g,' ');
+  if(!name)throw new Error('Digite o nome da categoria.');
+  if(getCategories().some(c=>c.toLocaleLowerCase('pt-BR')===name.toLocaleLowerCase('pt-BR')))throw new Error('Essa categoria já existe.');
+  check(await online.from('mb_categories').insert({name}));cloudCategories.push(name);renderCategories(name);input.value='';document.getElementById('categoryMsg').textContent='Categoria salva online!';setStatus('Categoria criada.');
+ });
+}
+async function saveSettings(){
+ await withSave(async()=>{check(await online.from('mb_settings').upsert({id:1,whatsapp:document.getElementById('whatsapp').value.replace(/\D/g,'')}));setStatus('WhatsApp salvo online!')});
+}
+function downloadLegacy(){
+ const blob=new Blob([JSON.stringify({products:legacyProducts,categories:legacyCategories,settings:legacySettings},null,2)],{type:'application/json'});
+ const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='maria_bonita_backup_mac.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+async function importLegacy(){
+ if(!legacyProducts.length){document.getElementById('importStatus').textContent='Nenhum produto local encontrado. Abra no navegador do Mac onde você cadastrou as peças.';return}
+ if(!confirm('Importar '+legacyProducts.length+' produtos e fotos? Produtos já importados serão atualizados.'))return;
+ await withSave(async()=>{
+  let count=0;const msg=document.getElementById('importStatus');
+  const names=[...new Set([...defaultCategories,...(Array.isArray(legacyCategories)?legacyCategories:[]),...legacyProducts.map(p=>p.category)].filter(Boolean))];
+  check(await online.from('mb_categories').upsert(names.map(name=>({name}))));
+  for(const p of legacyProducts){
+   msg.textContent='Importando '+(count+1)+' de '+legacyProducts.length+'…';
+   const images=await storeImages(p.images?.length?p.images:(p.image?[p.image]:[]));
+   const row={id:'legacy-'+p.id,name:p.name,category:p.category,price:Number(p.price),sizes:p.sizes||['Único'],colors:p.colors||['Única'],images,image:images[0]||''};
+   check(await online.from('mb_products').upsert(row));count++;
+  }
+  if(legacySettings.whatsapp)check(await online.from('mb_settings').upsert({id:1,whatsapp:legacySettings.whatsapp}));
+  await reloadOnline();msg.textContent=count+' produtos importados com sucesso. Os dados locais foram preservados.';
+ });
+}
+const originalHandleImageFiles=handleImageFiles;
+handleImageFiles=async function(input){imagesLoading=true;try{await originalHandleImageFiles(input)}finally{imagesLoading=false}};
+document.addEventListener('DOMContentLoaded',initializeOnline);
 </script>
 </body>
 </html>
